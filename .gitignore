@@ -1,0 +1,19 @@
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Windows / editors
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Logs
+*.log
+
+# Local downloads and build caches
+.downloads/
+.gradle-dist/
+.gradle-user/
+.tmp/
