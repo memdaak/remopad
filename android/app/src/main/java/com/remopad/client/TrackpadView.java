@@ -21,13 +21,12 @@ final class TrackpadView extends View {
     }
 
     private static final long TAP_TIMEOUT_MS = 260;
-    private static final long DRAG_HOLD_MS = 360;
 
     private final SparseArray<TouchPoint> pointers = new SparseArray<>();
     private final Paint titlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint hintPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final float density;
-    private float touchSlop;
+    private final float touchSlop;
 
     private GestureListener gestureListener;
     private float pointerSensitivity = 1f;
@@ -36,19 +35,6 @@ final class TrackpadView extends View {
     private float sessionMovement;
     private int maximumPointerCount;
     private boolean dragging;
-
-    private final Runnable longPressRunnable = () -> {
-        if (pointers.size() == 1
-                && maximumPointerCount == 1
-                && sessionMovement < touchSlop
-                && !dragging) {
-            dragging = true;
-            if (gestureListener != null) {
-                gestureListener.onButton(1, true);
-            }
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-        }
-    };
 
     TrackpadView(Context context) {
         this(context, null);
@@ -59,16 +45,18 @@ final class TrackpadView extends View {
         density = getResources().getDisplayMetrics().density;
         touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
 
-        setBackgroundColor(Color.rgb(250, 250, 251));
+        setBackgroundColor(Color.BLACK);
         setFocusable(true);
         setClickable(true);
 
-        titlePaint.setColor(Color.rgb(35, 39, 47));
+        titlePaint.setColor(Color.rgb(67, 73, 82));
         titlePaint.setTextSize(18f * density);
         titlePaint.setFakeBoldText(true);
+        titlePaint.setTextAlign(Paint.Align.CENTER);
 
-        hintPaint.setColor(Color.rgb(105, 112, 124));
+        hintPaint.setColor(Color.rgb(50, 55, 63));
         hintPaint.setTextSize(12f * density);
+        hintPaint.setTextAlign(Paint.Align.CENTER);
     }
 
     void setGestureListener(GestureListener listener) {
@@ -83,13 +71,21 @@ final class TrackpadView extends View {
         scrollSensitivity = sensitivity;
     }
 
+    void resetGestureState() {
+        stopThreeFingerDrag();
+        pointers.clear();
+        sessionMovement = 0f;
+        maximumPointerCount = 0;
+    }
+
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        float left = 18f * density;
-        canvas.drawText("触控区域", left, 36f * density, titlePaint);
-        canvas.drawText("一指移动和轻点 · 长按拖动 · 双指滚动和右键",
-                left, 58f * density, hintPaint);
+        float centerX = getWidth() / 2f;
+        float centerY = getHeight() / 2f;
+        canvas.drawText("触控区域", centerX, centerY - 4f * density, titlePaint);
+        canvas.drawText("一指移动和轻点 · 双指滚动和右键 · 三指拖动",
+                centerX, centerY + 22f * density, hintPaint);
     }
 
     @Override
@@ -102,13 +98,16 @@ final class TrackpadView extends View {
                 startSession();
                 addPointer(event, actionIndex);
                 maximumPointerCount = 1;
-                scheduleLongPress();
                 return true;
 
             case MotionEvent.ACTION_POINTER_DOWN:
                 addPointer(event, actionIndex);
                 maximumPointerCount = Math.max(maximumPointerCount, pointers.size());
-                cancelPendingLongPress();
+                if (pointers.size() == 3 && maximumPointerCount == 3) {
+                    startThreeFingerDrag();
+                } else if (dragging) {
+                    stopThreeFingerDrag();
+                }
                 return true;
 
             case MotionEvent.ACTION_MOVE:
@@ -117,7 +116,9 @@ final class TrackpadView extends View {
 
             case MotionEvent.ACTION_POINTER_UP:
                 pointers.remove(event.getPointerId(actionIndex));
-                cancelPendingLongPress();
+                if (dragging) {
+                    stopThreeFingerDrag();
+                }
                 return true;
 
             case MotionEvent.ACTION_UP:
@@ -143,22 +144,13 @@ final class TrackpadView extends View {
 
     @Override
     protected void onDetachedFromWindow() {
-        cancelPendingLongPress();
-        if (dragging && gestureListener != null) {
-            gestureListener.onButton(1, false);
-        }
-        dragging = false;
-        pointers.clear();
+        resetGestureState();
         super.onDetachedFromWindow();
     }
 
     private void startSession() {
-        cancelPendingLongPress();
-        pointers.clear();
+        resetGestureState();
         sessionStartedAt = SystemClock.uptimeMillis();
-        sessionMovement = 0f;
-        maximumPointerCount = 0;
-        dragging = false;
     }
 
     private void addPointer(MotionEvent event, int index) {
@@ -166,6 +158,27 @@ final class TrackpadView extends View {
         float x = event.getX(index);
         float y = event.getY(index);
         pointers.put(id, new TouchPoint(x, y));
+    }
+
+    private void startThreeFingerDrag() {
+        if (dragging) {
+            return;
+        }
+        dragging = true;
+        if (gestureListener != null) {
+            gestureListener.onButton(1, true);
+        }
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+    }
+
+    private void stopThreeFingerDrag() {
+        if (!dragging) {
+            return;
+        }
+        dragging = false;
+        if (gestureListener != null) {
+            gestureListener.onButton(1, false);
+        }
     }
 
     private void handleMove(MotionEvent event) {
@@ -195,22 +208,17 @@ final class TrackpadView extends View {
             updated++;
         }
 
-        if (updated == 0) {
+        if (updated == 0 || gestureListener == null) {
             return;
-        }
-
-        if (sessionMovement > touchSlop) {
-            cancelPendingLongPress();
         }
 
         float averageDx = totalDx / updated / density;
         float averageDy = totalDy / updated / density;
 
-        if (gestureListener == null) {
-            return;
-        }
-
-        if (pointers.size() == 1 && maximumPointerCount == 1) {
+        if (dragging && pointers.size() == 3) {
+            gestureListener.onMove(averageDx * pointerSensitivity,
+                    averageDy * pointerSensitivity);
+        } else if (pointers.size() == 1 && maximumPointerCount == 1) {
             gestureListener.onMove(averageDx * pointerSensitivity,
                     averageDy * pointerSensitivity);
         } else if (pointers.size() == 2 && maximumPointerCount == 2) {
@@ -220,13 +228,9 @@ final class TrackpadView extends View {
     }
 
     private void finishSession(boolean cancelled) {
-        cancelPendingLongPress();
+        stopThreeFingerDrag();
 
-        if (dragging) {
-            if (gestureListener != null) {
-                gestureListener.onButton(1, false);
-            }
-        } else if (!cancelled) {
+        if (!cancelled) {
             long duration = SystemClock.uptimeMillis() - sessionStartedAt;
             if (duration <= TAP_TIMEOUT_MS && sessionMovement < touchSlop) {
                 if (maximumPointerCount == 1) {
@@ -244,18 +248,8 @@ final class TrackpadView extends View {
             }
         }
 
-        dragging = false;
         sessionMovement = 0f;
         maximumPointerCount = 0;
-    }
-
-    private void scheduleLongPress() {
-        cancelPendingLongPress();
-        postDelayed(longPressRunnable, DRAG_HOLD_MS);
-    }
-
-    private void cancelPendingLongPress() {
-        removeCallbacks(longPressRunnable);
     }
 
     private static final class TouchPoint {

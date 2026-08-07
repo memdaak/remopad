@@ -1,92 +1,78 @@
-# RemoPad MVP
+# RemoPad
 
-RemoPad 把 Android 手机或 iPad 变成 Windows 的局域网触摸板。当前初版只传输入事件，不传屏幕画面。
+RemoPad 把 Android 手机变成 Windows 的轻量触摸板和键盘，只传输输入事件，不传输屏幕画面。Android 0.3.2 同时支持加密 Wi-Fi 和实验性 Bluetooth HID。
 
 ## 项目状态
 
 | 组件 | 状态 |
 | --- | --- |
-| Android 客户端 | 已构建并在 Android 真机上完成初步联调 |
-| Windows 接收端 | 已完成自检，并与 Android 真机联调 |
-| iPadOS 客户端 | **实验性源码：尚未在 Xcode 编译、签名或通过 iPad 真机验证** |
-
-当前建议先使用 Android 客户端测试。iPadOS 工程仅作为后续开发起点，不代表已经认证或可发布的 iOS 应用。
+| Android 客户端 | 0.3.2：已构建，等待完整真机体验回归 |
+| Windows 接收端 | 0.3：加密协议、自检及 Android/Windows 互操作测试通过 |
+| iPadOS 客户端 | **实验性 v1 源码：尚未编译、签名或真机验证，也尚未升级到 v2 加密协议** |
 
 ## 已实现
 
-- 一指移动鼠标
-- 轻点左键
-- 长按后拖动
-- 双指轻点右键
-- 双指滚动（水平和垂直）
-- 16 字节固定协议头、序号过滤和六位配对码
-- Windows 端无需安装开发环境，直接用 Windows PowerShell 5.1 运行
+- 一指移动、可靠原子单击
+- 双指滚动和右键
+- 三指拖动
+- 默认竖屏，按钮切换横屏
+- 深色沉浸式界面和隐藏式虚拟键盘
+- Wi-Fi 自动发现、自动重连和 RTT 延迟显示
+- 可靠事件 ACK、去重与重传
+- AES-256-CBC 加密和 HMAC-SHA256 认证
+- Android 9+ 实验性 Bluetooth HID 鼠标/键盘
+- Windows 端无需安装开发环境，使用 Windows PowerShell 5.1 运行
 
-## 目录
-
-- `ios/RemoPad.xcodeproj`：iPadOS 原生 Swift 工程
-- `android/`：Android 原生 Java 工程
-- `windows/RemoPadReceiver.ps1`：Windows UDP 接收和输入注入程序
-- `docs/protocol-v1.md`：网络协议说明
+项目仍然只使用原生 Java、Android 系统 View 和 PowerShell，不包含第三方运行时依赖。
 
 ## 快速开始
 
-### 1. Windows
-
-在 PowerShell 中运行：
+### Windows（Wi-Fi 模式）
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\windows\RemoPadReceiver.ps1 -PairingCode 246810
+.\windows\RemoPadReceiver.ps1
 ```
 
-记下程序显示的本机 IPv4 地址。如果 Windows 防火墙弹出提示，只允许“专用网络”。
+首次运行会在 `%LOCALAPPDATA%\RemoPad\pairing-key.txt` 生成随机 256 位密钥，并在窗口中显示。密钥不会通过自动发现广播。
 
-可以先运行不注入鼠标的自检：
+如需只做协议自检：
 
 ```powershell
 .\windows\RemoPadReceiver.ps1 -SelfTest
 ```
 
-### 2. Android
+### Android Wi-Fi
 
-1. 用 Android Studio 打开 `android` 目录。
-2. 等待 Gradle Sync 完成，连接已启用 USB 调试的 Android 设备。
-3. 选择 `app` 并点击 Run。
-4. 输入 Windows 接收端显示的 IPv4 地址、端口 `51234` 和相同配对码。
+1. 用 Android Studio 打开 `android` 目录并运行 `app`。
+2. 保持手机和 Windows 位于同一受信任局域网。
+3. 启动 Windows 接收器，Android 通常会自动发现电脑。
+4. 首次录入接收器显示的安全配对密钥，然后点击“连接”。
+5. 右上角绿点和延迟数值出现后即可使用。
 
-更详细的构建说明见 `android/README.md`。
+### Android 蓝牙
 
-### 3. iPad（尚未验证）
+1. 如果 Windows 已把手机配对成普通设备，先在 Windows 和手机上删除这条旧配对。
+2. Android 9 或更高版本选择“蓝牙”模式，点击“HID 配对”。
+3. 允许手机在 300 秒内被发现，并让 RemoPad 保持在前台。
+4. 立即在 Windows“添加设备 > 蓝牙”中选择手机。此时 HID 服务已经注册，Windows 会把它识别为鼠标和键盘。
+5. 配对完成后点击“连接”；如果手机保存了多台电脑，请在弹窗中选择当前 Windows 电脑。RemoPad 会记住选择并自动重连。
 
-> 此工程尚未在 Xcode 编译、签名或通过 iPad 真机验证，需要有 Mac 和 Apple 开发环境后继续测试。
+Bluetooth HID 是否可用取决于手机厂商的系统实现。配对期间不能切到 Android 系统蓝牙设置，因为应用退到后台后 Android 会注销 HID 服务。Wi-Fi 键盘支持 Unicode；蓝牙键盘当前只映射常用英文字符。
 
-1. 在 Mac 上用 Xcode 打开 `ios/RemoPad.xcodeproj`。
-2. 在 Signing & Capabilities 中选择自己的开发团队。
-3. 连接 iPad 并运行。
-4. 输入 Windows 的 IPv4 地址、端口 `51234` 和相同配对码。
-5. 点击“连接”，状态变成“已连接”后使用下方触控区域。
+## 手势
 
-iPad 和 Windows 必须位于同一局域网。部分路由器的访客网络会隔离设备，无法互相通信。
+- 一指移动：鼠标移动
+- 一指轻点：一次左键单击；连续轻点两次为双击
+- 双指移动：水平/垂直滚动
+- 双指轻点：右键
+- 三指同时按下并移动：拖动
 
 ## 当前限制
 
-- 初版使用 UDP；按键事件尚未增加确认重传。
-- 没有自动发现和加密，六位码只用于阻止局域网内的误连接，不是强安全认证。
-- Windows 端当前使用 `SendInput`，不是 Windows Precision Touchpad 设备。
-- 当前客户端只支持 Wi-Fi/局域网 UDP 通信；蓝牙、自动重连和延迟统计将在后续版本加入。
-- iPadOS 客户端尚未完成构建、签名和真机验证。
-- Windows 11 原生合成触控板将在后续版本评估；当前输出表现为普通鼠标输入。
+- Windows Wi-Fi 接收端使用 `SendInput`，不是 Precision Touchpad。目标软件以管理员身份运行时，接收器也需要相同权限。
+- 加密使用预共享随机密钥，不提供前向保密；请勿公开 `pairing-key.txt`。
+- Bluetooth HID 需要 Android 9+，且应用必须保持前台；部分厂商会禁用该系统能力。
+- iPadOS 工程仍停留在旧 v1 协议，当前不能连接 0.3 Windows 接收端。
 
-## 调整手感
-
-Windows 端参数：
-
-```powershell
-.\windows\RemoPadReceiver.ps1 `
-  -PairingCode 246810 `
-  -PointerSensitivity 1.35 `
-  -WheelScale 4.0
-```
-
-鼠标仍会受到 Windows“指针速度”和“提高指针精确度”设置影响。
+协议说明见 `docs/protocol-v2.md`，旧版记录保留在 `docs/protocol-v1.md`。

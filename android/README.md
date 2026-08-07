@@ -1,51 +1,46 @@
-# RemoPad Android MVP
+# RemoPad Android 0.3
 
-这是 RemoPad 的轻量原生 Android 客户端，复用根目录中的 `RMP1` UDP 协议和 Windows 接收端。
+轻量原生 Android 客户端：纯 Java、系统 View，无 Kotlin、Compose、AndroidX 或第三方库。
 
 ## 设备要求
 
-- Android 6.0（API 23）或更高版本
-- Windows 与 Android 位于同一局域网
-- 构建需要 Android Studio、JDK 17 或更高版本，以及 Android SDK 37
+- Wi-Fi 模式：Android 6.0（API 23）或更高版本
+- Bluetooth HID：Android 9（API 28）或更高版本，并取决于厂商系统支持
+- 构建：Android Studio、JDK 17 或更高版本、Android SDK 37
 
-项目使用纯 Java 和系统 View，不依赖 Kotlin、Compose、AndroidX 或第三方库。Release 构建启用 R8 和资源压缩。
+## 构建
 
-## Android Studio 构建
-
-1. 用 Android Studio 打开本 `android` 目录。
-2. 等待 Gradle Sync 完成；安装提示的 Android SDK 36。
-3. 连接开启 USB 调试的 Android 设备。
-4. 选择 `app` 并点击 Run。
-
-也可以在配置好 JDK 和 Android SDK 后运行：
+用 Android Studio 打开本目录，连接已启用 USB 调试的设备并运行 `app`。也可以执行：
 
 ```powershell
 .\gradlew.bat :app:assembleDebug
 ```
 
-生成的 APK 位于：
+APK 输出：`app/build/outputs/apk/debug/app-debug.apk`。
 
-```text
-app/build/outputs/apk/debug/app-debug.apk
-```
+## Wi-Fi 联调
 
-## 联调
-
-先在仓库根目录启动 Windows 接收端：
+先在仓库根目录启动：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\windows\RemoPadReceiver.ps1 -PairingCode 246810
+.\windows\RemoPadReceiver.ps1
 ```
 
-然后在 Android 应用中填写接收端显示的 IPv4 地址、端口 `51234` 和相同配对码。
+应用会广播发现请求并自动填写电脑 IP。首次连接还需录入接收器显示的 64 位十六进制安全配对密钥。移动和滚动采用最新状态 UDP；点击、按键和文本使用 ACK、去重和重传。心跳用于自动重连及延迟统计。
 
-手势：
+## Bluetooth HID
 
-- 一指移动：移动鼠标
-- 一指轻点：左键
-- 一指停留约 360ms 后移动：拖动
-- 双指移动：滚动
-- 双指轻点：右键
+如果手机以前已作为普通设备与 Windows 配对，请先在两端删除旧配对。选择“蓝牙”模式并点击“HID 配对”，允许 300 秒可发现，然后保持 RemoPad 在前台并从 Windows“添加设备 > 蓝牙”选择手机。应用会在进入可发现状态前注册鼠标/键盘 HID 服务。配对完成后点击“连接”；如果保存了多台电脑，选择当前 Windows 主机，应用会记住该选择。该模式直接使用 Android `BluetoothHidDevice`，Windows 不需要运行 RemoPad 接收器。
 
-初版配对码不是加密认证，只适合受信任的家庭或办公局域网。
+不要在 HID 配对过程中切到 Android 系统蓝牙设置：Android 会在应用离开前台后自动注销 HID 应用，Windows 随后只能发现普通手机类别。
+
+蓝牙鼠标支持移动、左右键、垂直滚动和水平平移。蓝牙键盘当前映射常用英文字符；需要中文等 Unicode 文本时使用 Wi-Fi 模式。
+
+## 手势与按钮
+
+- 一指移动、轻点左键
+- 双指滚动、轻点右键
+- 三指拖动
+- “横屏/竖屏”切换方向，启动默认竖屏
+- “键盘”调出系统软键盘，平时保持隐藏
