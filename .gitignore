@@ -17,3 +17,9 @@ xcuserdata/
 .gradle-dist/
 .gradle-user/
 .tmp/
+.version-work/
+
+# Local release artifacts (publish these through GitHub Releases)
+releases/
+*.apk
+*.aab
