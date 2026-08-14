@@ -502,6 +502,13 @@ public final class MainActivity extends Activity {
     }
 
     private void requestBluetoothDiscoverable() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                && checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+                != PackageManager.PERMISSION_GRANTED) {
+            bluetoothPairingPending = false;
+            onTransportStatusChanged("需要附近设备权限", false, -1);
+            return;
+        }
         try {
             Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
             intent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);

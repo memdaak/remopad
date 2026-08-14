@@ -1,4 +1,4 @@
-# RemoPad Android 0.3
+# RemoPad Android 0.4
 
 轻量原生 Android 客户端：纯 Java、系统 View，无 Kotlin、Compose、AndroidX 或第三方库。
 
@@ -27,7 +27,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\windows\RemoPadReceiver.ps1
 ```
 
-应用会广播发现请求并自动填写电脑 IP。首次连接还需录入接收器显示的 64 位十六进制安全配对密钥。移动和滚动采用最新状态 UDP；点击、按键和文本使用 ACK、去重和重传。心跳用于自动重连及延迟统计。
+应用会广播发现请求并自动填写电脑 IP。首次连接还需录入接收器显示的 64 位十六进制安全配对密钥。每次连接通过 P-256 临时 ECDH 和长期配对密钥建立独立会话密钥，随后使用 AES-256-CBC 与 HMAC-SHA256 保护输入。移动和滚动使用低延迟 UDP，其中相对增量会在发送线程繁忙时累积而不是覆盖；点击、按键和文本使用 ACK、去重和重传。心跳用于自动重连及延迟统计，重连会建立新的临时会话。
+
+0.4 客户端的 Wi-Fi 模式只兼容 0.4 接收器。Bluetooth HID 模式不使用该网络协议。
 
 ## Bluetooth HID
 
@@ -40,7 +42,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 ## 手势与按钮
 
 - 一指移动、轻点左键
-- 双指滚动、轻点右键
+- 双指滚动、轻点右键；快速拖动会获得有限加速度
 - 三指拖动
 - “横屏/竖屏”切换方向，启动默认竖屏
 - “键盘”调出系统软键盘，平时保持隐藏

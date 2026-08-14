@@ -38,8 +38,8 @@ final class UdpTransport {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Object stateLock = new Object();
     private final AtomicInteger sequence = new AtomicInteger();
-    private final AtomicReference<byte[]> latestMove = new AtomicReference<>();
-    private final AtomicReference<byte[]> latestScroll = new AtomicReference<>();
+    private final RelativeAccumulator pendingMove = new RelativeAccumulator();
+    private final RelativeAccumulator pendingScroll = new RelativeAccumulator();
     private final ConcurrentLinkedQueue<ReliablePacket> reliableQueue =
             new ConcurrentLinkedQueue<>();
     private final AtomicReference<ReliablePacket> activeReliable =
@@ -47,6 +47,7 @@ final class UdpTransport {
     private final Semaphore senderWakeup = new Semaphore(0);
 
     private volatile DatagramSocket socket;
+    private volatile Protocol.PairingContext pairing;
     private volatile Protocol.CryptoContext crypto;
     private volatile boolean connected;
     private volatile boolean connecting;
@@ -54,7 +55,6 @@ final class UdpTransport {
     private volatile int generation;
     private volatile String host;
     private volatile int port;
-    private volatile String pairingKey;
     private volatile String connectedLabel;
     private volatile int latencyMs = -1;
     private volatile int pendingPingSequence;
@@ -74,9 +74,9 @@ final class UdpTransport {
     }
 
     void connect(String targetHost, int targetPort, String keyText) {
-        final Protocol.CryptoContext context;
+        final Protocol.PairingContext pairingContext;
         try {
-            context = Protocol.createCryptoContext(keyText);
+            pairingContext = Protocol.createPairingContext(keyText);
         } catch (Exception error) {
             postStatus("配对密钥格式不正确", false, -1);
             return;
@@ -86,8 +86,8 @@ final class UdpTransport {
             reconnectEnabled = true;
             host = targetHost;
             port = targetPort;
-            pairingKey = keyText;
-            crypto = context;
+            pairing = pairingContext;
+            crypto = null;
         }
         beginConnection(false);
     }
@@ -109,13 +109,8 @@ final class UdpTransport {
         if (!connected || !isFinite(dx) || !isFinite(dy)) {
             return;
         }
-        try {
-            byte[] packet = Protocol.move(crypto, nextSequence(), dx, dy);
-            if (latestMove.getAndSet(packet) == null) {
-                senderWakeup.release();
-            }
-        } catch (GeneralSecurityException error) {
-            failCurrentConnection("加密移动事件失败");
+        if (pendingMove.add(dx, dy)) {
+            senderWakeup.release();
         }
     }
 
@@ -123,13 +118,8 @@ final class UdpTransport {
         if (!connected || !isFinite(dx) || !isFinite(dy)) {
             return;
         }
-        try {
-            byte[] packet = Protocol.scroll(crypto, nextSequence(), dx, dy);
-            if (latestScroll.getAndSet(packet) == null) {
-                senderWakeup.release();
-            }
-        } catch (GeneralSecurityException error) {
-            failCurrentConnection("加密滚动事件失败");
+        if (pendingScroll.add(dx, dy)) {
+            senderWakeup.release();
         }
     }
 
@@ -246,7 +236,7 @@ final class UdpTransport {
         final int currentGeneration;
         final String targetHost;
         final int targetPort;
-        final Protocol.CryptoContext context;
+        final Protocol.PairingContext pairingContext;
 
         synchronized (stateLock) {
             if (!reconnectEnabled) {
@@ -261,7 +251,7 @@ final class UdpTransport {
             sequence.set(0);
             targetHost = host;
             targetPort = port;
-            context = crypto;
+            pairingContext = pairing;
         }
 
         postStatus(automatic ? "正在自动重连…" : "正在安全连接…",
@@ -289,6 +279,17 @@ final class UdpTransport {
                     }
                 }
 
+                Protocol.ClientHandshake handshake =
+                        pairingContext.beginHandshake();
+                byte[] hello = handshake.request();
+                candidate.send(new DatagramPacket(hello, hello.length));
+                byte[] helloResponse = new byte[256];
+                DatagramPacket helloPacket = new DatagramPacket(
+                        helloResponse, helloResponse.length);
+                candidate.receive(helloPacket);
+                Protocol.CryptoContext context = handshake.finish(
+                        helloResponse, helloPacket.getLength());
+
                 int pingSequence = nextSequence();
                 byte[] ping = Protocol.ping(context, pingSequence);
                 candidate.send(new DatagramPacket(ping, ping.length));
@@ -308,6 +309,7 @@ final class UdpTransport {
                         return;
                     }
                     socket = candidate;
+                    crypto = context;
                     connected = true;
                     connecting = false;
                     latencyMs = handshakeLatency;
@@ -386,10 +388,28 @@ final class UdpTransport {
             }
 
             if (packet == null) {
-                packet = latestMove.getAndSet(null);
+                RelativeDelta move = pendingMove.drain();
+                if (move != null) {
+                    try {
+                        packet = Protocol.move(context, nextSequence(),
+                                move.dx, move.dy);
+                    } catch (GeneralSecurityException error) {
+                        failConnection(senderGeneration, "加密移动事件失败");
+                        return;
+                    }
+                }
             }
             if (packet == null) {
-                packet = latestScroll.getAndSet(null);
+                RelativeDelta scroll = pendingScroll.drain();
+                if (scroll != null) {
+                    try {
+                        packet = Protocol.scroll(context, nextSequence(),
+                                scroll.dx, scroll.dy);
+                    } catch (GeneralSecurityException error) {
+                        failConnection(senderGeneration, "加密滚动事件失败");
+                        return;
+                    }
+                }
             }
 
             now = SystemClock.elapsedRealtime();
@@ -531,11 +551,12 @@ final class UdpTransport {
     }
 
     private void clearQueuesLocked() {
-        latestMove.set(null);
-        latestScroll.set(null);
+        pendingMove.clear();
+        pendingScroll.clear();
         reliableQueue.clear();
         activeReliable.set(null);
         pendingPingSequence = 0;
+        crypto = null;
         senderWakeup.drainPermits();
     }
 
@@ -554,6 +575,52 @@ final class UdpTransport {
 
     private static boolean isFinite(float value) {
         return !Float.isNaN(value) && !Float.isInfinite(value);
+    }
+
+    private static final class RelativeAccumulator {
+        private static final float MAX_PENDING = 8192f;
+        private float dx;
+        private float dy;
+        private boolean pending;
+
+        synchronized boolean add(float addedDx, float addedDy) {
+            boolean wasEmpty = !pending;
+            dx = clamp(dx + addedDx);
+            dy = clamp(dy + addedDy);
+            pending = true;
+            return wasEmpty;
+        }
+
+        synchronized RelativeDelta drain() {
+            if (!pending) {
+                return null;
+            }
+            RelativeDelta result = new RelativeDelta(dx, dy);
+            dx = 0f;
+            dy = 0f;
+            pending = false;
+            return result;
+        }
+
+        synchronized void clear() {
+            dx = 0f;
+            dy = 0f;
+            pending = false;
+        }
+
+        private static float clamp(float value) {
+            return Math.max(-MAX_PENDING, Math.min(MAX_PENDING, value));
+        }
+    }
+
+    private static final class RelativeDelta {
+        final float dx;
+        final float dy;
+
+        RelativeDelta(float dx, float dy) {
+            this.dx = dx;
+            this.dy = dy;
+        }
     }
 
     private static final class ReliablePacket {

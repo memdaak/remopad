@@ -1,5 +1,6 @@
 package com.remopad.client;
 
+import android.annotation.TargetApi;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothDevice;
@@ -14,6 +15,7 @@ import android.os.Looper;
 import android.util.Log;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
@@ -21,6 +23,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+@TargetApi(Build.VERSION_CODES.P)
 final class BluetoothHidTransport {
     private static final String TAG = "RemoPadHid";
     private static final String PREFS_NAME = "remopad";
@@ -125,7 +128,12 @@ final class BluetoothHidTransport {
                 }
             }
         } catch (SecurityException ignored) {}
-        hosts.sort(Comparator.comparing(option -> option.name));
+        Collections.sort(hosts, new Comparator<HostOption>() {
+            @Override
+            public int compare(HostOption left, HostOption right) {
+                return left.name.compareToIgnoreCase(right.name);
+            }
+        });
         return hosts;
     }
 
