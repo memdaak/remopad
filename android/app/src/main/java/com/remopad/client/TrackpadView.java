@@ -32,6 +32,7 @@ final class TrackpadView extends View {
     private float pointerSensitivity = 1f;
     private float scrollSensitivity = 1f;
     private long sessionStartedAt;
+    private long lastScrollEventAt;
     private float sessionMovement;
     private int maximumPointerCount;
     private boolean dragging;
@@ -76,6 +77,7 @@ final class TrackpadView extends View {
         pointers.clear();
         sessionMovement = 0f;
         maximumPointerCount = 0;
+        lastScrollEventAt = 0L;
     }
 
     @Override
@@ -222,8 +224,17 @@ final class TrackpadView extends View {
             gestureListener.onMove(averageDx * pointerSensitivity,
                     averageDy * pointerSensitivity);
         } else if (pointers.size() == 2 && maximumPointerCount == 2) {
-            gestureListener.onScroll(averageDx * scrollSensitivity,
-                    averageDy * scrollSensitivity);
+            long eventTime = event.getEventTime();
+            long elapsed = lastScrollEventAt == 0L
+                    ? 16L : Math.max(8L, eventTime - lastScrollEventAt);
+            lastScrollEventAt = eventTime;
+            float speed = (float) Math.hypot(averageDx, averageDy)
+                    * 1000f / elapsed;
+            float acceleration = 1f + Math.min(1.4f,
+                    Math.max(0f, speed - 70f) / 360f);
+            gestureListener.onScroll(
+                    averageDx * scrollSensitivity * acceleration,
+                    averageDy * scrollSensitivity * acceleration);
         }
     }
 
@@ -250,6 +261,7 @@ final class TrackpadView extends View {
 
         sessionMovement = 0f;
         maximumPointerCount = 0;
+        lastScrollEventAt = 0L;
     }
 
     private static final class TouchPoint {

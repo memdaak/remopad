@@ -1,14 +1,25 @@
 package com.remopad.client;
 
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.security.AlgorithmParameters;
 import java.security.GeneralSecurityException;
+import java.security.KeyFactory;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.security.interfaces.ECPublicKey;
+import java.security.spec.ECGenParameterSpec;
+import java.security.spec.ECParameterSpec;
+import java.security.spec.ECPoint;
+import java.security.spec.ECPublicKeySpec;
 import java.util.Arrays;
 
 import javax.crypto.Cipher;
+import javax.crypto.KeyAgreement;
 import javax.crypto.Mac;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -31,23 +42,40 @@ final class Protocol {
     static final int KEY_TAB = 3;
     static final int KEY_ESCAPE = 4;
 
-    private static final byte VERSION = 2;
+    private static final byte VERSION = 3;
     private static final int HEADER_LENGTH = 24;
     private static final int TAG_LENGTH = 16;
     private static final int INNER_HEADER_LENGTH = 8;
     private static final int MAX_PAYLOAD_LENGTH = 2048;
-    private static final byte[] MAGIC = "RME2".getBytes(StandardCharsets.US_ASCII);
+    private static final int NONCE_LENGTH = 16;
+    private static final int PUBLIC_KEY_LENGTH = 65;
+    private static final int CLIENT_HELLO_UNSIGNED_LENGTH = 4 + NONCE_LENGTH
+            + PUBLIC_KEY_LENGTH;
+    private static final int CLIENT_HELLO_LENGTH = CLIENT_HELLO_UNSIGNED_LENGTH
+            + TAG_LENGTH;
+    private static final int SERVER_HELLO_UNSIGNED_LENGTH = 4 + NONCE_LENGTH
+            + NONCE_LENGTH + PUBLIC_KEY_LENGTH;
+    private static final int SERVER_HELLO_LENGTH = SERVER_HELLO_UNSIGNED_LENGTH
+            + TAG_LENGTH;
+
+    private static final byte[] MAGIC =
+            "RME3".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] CLIENT_HELLO_MAGIC =
+            "RMH3".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] SERVER_HELLO_MAGIC =
+            "RMS3".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] DISCOVERY_REQUEST =
             "RMD1".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] DISCOVERY_RESPONSE =
             "RMR1".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] SESSION_LABEL =
+            "RemoPad v3 session".getBytes(StandardCharsets.US_ASCII);
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private Protocol() {}
 
-    static CryptoContext createCryptoContext(String keyText)
-            throws GeneralSecurityException {
-        return new CryptoContext(parseKey(keyText));
+    static PairingContext createPairingContext(String keyText) {
+        return new PairingContext(parseKey(keyText));
     }
 
     static boolean isValidPairingKey(String keyText) {
@@ -134,10 +162,8 @@ final class Protocol {
         if (data == null || length < 6 || length > 128) {
             return null;
         }
-        for (int index = 0; index < DISCOVERY_RESPONSE.length; index++) {
-            if (data[index] != DISCOVERY_RESPONSE[index]) {
-                return null;
-            }
+        if (!hasMagic(data, length, DISCOVERY_RESPONSE)) {
+            return null;
         }
         ByteBuffer buffer = ByteBuffer.wrap(data, 4, length - 4)
                 .order(ByteOrder.LITTLE_ENDIAN);
@@ -185,13 +211,162 @@ final class Protocol {
         return key;
     }
 
+    private static byte[] authenticate(byte[] key, byte[] data)
+            throws GeneralSecurityException {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(key, "HmacSHA256"));
+        return mac.doFinal(data);
+    }
+
+    private static byte[] derive(byte[] key, String label)
+            throws GeneralSecurityException {
+        return authenticate(key, label.getBytes(StandardCharsets.US_ASCII));
+    }
+
+    private static byte[] deriveSessionSeed(byte[] pairingKey,
+                                            byte[] sharedHash,
+                                            byte[] clientNonce,
+                                            byte[] serverNonce)
+            throws GeneralSecurityException {
+        ByteBuffer input = ByteBuffer.allocate(SESSION_LABEL.length
+                + sharedHash.length + clientNonce.length + serverNonce.length);
+        input.put(SESSION_LABEL).put(sharedHash).put(clientNonce).put(serverNonce);
+        return authenticate(pairingKey, input.array());
+    }
+
+    private static boolean hasMagic(byte[] data, int length, byte[] magic) {
+        if (data == null || length < magic.length) {
+            return false;
+        }
+        for (int index = 0; index < magic.length; index++) {
+            if (data[index] != magic[index]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static byte[] encodePublicKey(ECPublicKey key) {
+        byte[] encoded = new byte[PUBLIC_KEY_LENGTH];
+        encoded[0] = 4;
+        copyCoordinate(key.getW().getAffineX(), encoded, 1);
+        copyCoordinate(key.getW().getAffineY(), encoded, 33);
+        return encoded;
+    }
+
+    private static ECPublicKey decodePublicKey(byte[] encoded)
+            throws GeneralSecurityException {
+        if (encoded == null || encoded.length != PUBLIC_KEY_LENGTH
+                || encoded[0] != 4) {
+            throw new GeneralSecurityException("invalid P-256 public key");
+        }
+        AlgorithmParameters parameters = AlgorithmParameters.getInstance("EC");
+        parameters.init(new ECGenParameterSpec("secp256r1"));
+        ECParameterSpec spec = parameters.getParameterSpec(ECParameterSpec.class);
+        ECPoint point = new ECPoint(
+                new BigInteger(1, Arrays.copyOfRange(encoded, 1, 33)),
+                new BigInteger(1, Arrays.copyOfRange(encoded, 33, 65)));
+        return (ECPublicKey) KeyFactory.getInstance("EC")
+                .generatePublic(new ECPublicKeySpec(point, spec));
+    }
+
+    private static void copyCoordinate(BigInteger value,
+                                       byte[] target, int offset) {
+        byte[] source = value.toByteArray();
+        int sourceOffset = Math.max(0, source.length - 32);
+        int length = Math.min(32, source.length);
+        System.arraycopy(source, sourceOffset, target,
+                offset + 32 - length, length);
+    }
+
+    static final class PairingContext {
+        private final byte[] pairingKey;
+
+        PairingContext(byte[] pairingKey) {
+            this.pairingKey = pairingKey.clone();
+        }
+
+        ClientHandshake beginHandshake() throws GeneralSecurityException {
+            return new ClientHandshake(pairingKey);
+        }
+    }
+
+    static final class ClientHandshake {
+        private final byte[] pairingKey;
+        private final byte[] clientNonce;
+        private final KeyPair keyPair;
+        private final byte[] request;
+
+        ClientHandshake(byte[] pairingKey) throws GeneralSecurityException {
+            this.pairingKey = pairingKey.clone();
+            clientNonce = new byte[NONCE_LENGTH];
+            RANDOM.nextBytes(clientNonce);
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+            generator.initialize(new ECGenParameterSpec("secp256r1"), RANDOM);
+            keyPair = generator.generateKeyPair();
+
+            ByteBuffer unsigned = ByteBuffer.allocate(
+                    CLIENT_HELLO_UNSIGNED_LENGTH);
+            unsigned.put(CLIENT_HELLO_MAGIC);
+            unsigned.put(clientNonce);
+            unsigned.put(encodePublicKey((ECPublicKey) keyPair.getPublic()));
+            byte[] tag = authenticate(this.pairingKey, unsigned.array());
+            ByteBuffer packet = ByteBuffer.allocate(CLIENT_HELLO_LENGTH);
+            packet.put(unsigned.array()).put(tag, 0, TAG_LENGTH);
+            request = packet.array();
+        }
+
+        byte[] request() {
+            return request.clone();
+        }
+
+        CryptoContext finish(byte[] response, int length)
+                throws GeneralSecurityException {
+            if (response == null || length != SERVER_HELLO_LENGTH
+                    || !hasMagic(response, length, SERVER_HELLO_MAGIC)) {
+                throw new GeneralSecurityException("invalid server hello");
+            }
+            byte[] returnedClientNonce = Arrays.copyOfRange(response, 4,
+                    4 + NONCE_LENGTH);
+            if (!MessageDigest.isEqual(clientNonce, returnedClientNonce)) {
+                throw new GeneralSecurityException("server hello nonce mismatch");
+            }
+            byte[] expectedTag = authenticate(pairingKey,
+                    Arrays.copyOf(response, SERVER_HELLO_UNSIGNED_LENGTH));
+            byte[] actualTag = Arrays.copyOfRange(response,
+                    SERVER_HELLO_UNSIGNED_LENGTH, SERVER_HELLO_LENGTH);
+            if (!MessageDigest.isEqual(
+                    Arrays.copyOf(expectedTag, TAG_LENGTH), actualTag)) {
+                throw new GeneralSecurityException("server hello authentication failed");
+            }
+
+            byte[] serverNonce = Arrays.copyOfRange(response,
+                    4 + NONCE_LENGTH, 4 + NONCE_LENGTH * 2);
+            byte[] serverPublic = Arrays.copyOfRange(response,
+                    4 + NONCE_LENGTH * 2, SERVER_HELLO_UNSIGNED_LENGTH);
+            KeyAgreement agreement = KeyAgreement.getInstance("ECDH");
+            agreement.init(keyPair.getPrivate());
+            agreement.doPhase(decodePublicKey(serverPublic), true);
+            byte[] sharedSecret = agreement.generateSecret();
+            byte[] sharedHash = MessageDigest.getInstance("SHA-256")
+                    .digest(sharedSecret);
+            Arrays.fill(sharedSecret, (byte) 0);
+            byte[] sessionSeed = deriveSessionSeed(pairingKey, sharedHash,
+                    clientNonce, serverNonce);
+            Arrays.fill(sharedHash, (byte) 0);
+            CryptoContext context = new CryptoContext(sessionSeed);
+            Arrays.fill(sessionSeed, (byte) 0);
+            return context;
+        }
+    }
+
     static final class CryptoContext {
         private final byte[] encryptionKey;
         private final byte[] authenticationKey;
 
-        CryptoContext(byte[] masterKey) throws GeneralSecurityException {
-            encryptionKey = derive(masterKey, "RemoPad encryption v2");
-            authenticationKey = derive(masterKey, "RemoPad authentication v2");
+        CryptoContext(byte[] sessionSeed) throws GeneralSecurityException {
+            encryptionKey = derive(sessionSeed, "RemoPad encryption v3");
+            authenticationKey = derive(sessionSeed, "RemoPad authentication v3");
         }
 
         byte[] encrypt(int type, int sequence, byte[] payload)
@@ -235,13 +410,9 @@ final class Protocol {
 
         DecodedPacket decrypt(byte[] packet, int length)
                 throws GeneralSecurityException {
-            if (packet == null || length < HEADER_LENGTH + 16 + TAG_LENGTH) {
+            if (packet == null || length < HEADER_LENGTH + 16 + TAG_LENGTH
+                    || !hasMagic(packet, length, MAGIC)) {
                 return null;
-            }
-            for (int index = 0; index < MAGIC.length; index++) {
-                if (packet[index] != MAGIC[index]) {
-                    return null;
-                }
             }
             if (packet[4] != VERSION || packet[5] != 0) {
                 return null;
@@ -292,18 +463,6 @@ final class Protocol {
             byte[] payload = new byte[payloadLength];
             inner.get(payload);
             return new DecodedPacket(type, sequence, payload);
-        }
-
-        private static byte[] derive(byte[] masterKey, String label)
-                throws GeneralSecurityException {
-            return authenticate(masterKey, label.getBytes(StandardCharsets.US_ASCII));
-        }
-
-        private static byte[] authenticate(byte[] key, byte[] data)
-                throws GeneralSecurityException {
-            Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(key, "HmacSHA256"));
-            return mac.doFinal(data);
         }
     }
 
