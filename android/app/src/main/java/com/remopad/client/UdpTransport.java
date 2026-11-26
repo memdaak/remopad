@@ -136,6 +136,22 @@ final class UdpTransport {
         }
     }
 
+    void sendWheel(int ticks) {
+        Protocol.CryptoContext context = crypto;
+        if (!connected || context == null) return;
+        try {
+            while (ticks != 0) {
+                int chunk = Math.max(-127, Math.min(127, ticks));
+                int eventSequence = nextSequence();
+                enqueueReliable(new ReliablePacket(eventSequence,
+                        Protocol.wheel(context, eventSequence, chunk)));
+                ticks -= chunk;
+            }
+        } catch (GeneralSecurityException error) {
+            failCurrentConnection("加密滚轮事件失败");
+        }
+    }
+
     void sendClick(int button) {
         if (!connected) {
             return;

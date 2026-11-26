@@ -41,6 +41,7 @@ public final class MainActivity extends Activity {
     private static final String PREF_KEY = "pairing_key_v2";
     private static final String PREF_POINTER = "pointer_sensitivity";
     private static final String PREF_SCROLL = "scroll_sensitivity";
+    private static final String PREF_PAGE_KEYS = "page_keys_visible";
     private static final String PREF_BLUETOOTH_MODE = "bluetooth_mode";
 
     private static final int COLOR_BACKGROUND = Color.rgb(0, 0, 0);
@@ -90,6 +91,10 @@ public final class MainActivity extends Activity {
         trackpadView.setGestureListener(new TrackpadView.GestureListener() {
             @Override public void onMove(float dx, float dy) { sendMove(dx, dy); }
             @Override public void onScroll(float dx, float dy) { sendScroll(dx, dy); }
+            @Override public void onWheel(int ticks) {
+                if (bluetoothMode) bluetoothTransport.sendWheel(ticks);
+                else udpTransport.sendWheel(ticks);
+            }
             @Override public void onButton(int button, boolean isDown) {
                 sendButton(button, isDown);
             }
@@ -117,6 +122,7 @@ public final class MainActivity extends Activity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        trackpadView.resetGestureState();
         updateOrientationButton();
         applyImmersiveMode();
     }
@@ -142,6 +148,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        trackpadView.resetGestureState();
         saveSettings();
         super.onPause();
     }
@@ -195,18 +202,21 @@ public final class MainActivity extends Activity {
     }
 
     private void buildInterface() {
-        FrameLayout root = new FrameLayout(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(COLOR_BACKGROUND);
 
+        FrameLayout pad = new FrameLayout(this);
+        pad.setMotionEventSplittingEnabled(false);
         trackpadView = new TrackpadView(this);
-        root.addView(trackpadView, new FrameLayout.LayoutParams(
+        pad.addView(trackpadView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
         keyboardInput = new KeyboardInputView(this);
         FrameLayout.LayoutParams keyboardParams = new FrameLayout.LayoutParams(1, 1);
         keyboardParams.gravity = Gravity.BOTTOM | Gravity.START;
-        root.addView(keyboardInput, keyboardParams);
+        pad.addView(keyboardInput, keyboardParams);
 
         LinearLayout overlay = new LinearLayout(this);
         overlay.setOrientation(LinearLayout.VERTICAL);
@@ -312,14 +322,52 @@ public final class MainActivity extends Activity {
         settingsPanel.addView(sensitivityRow);
         overlay.addView(settingsPanel);
 
-        FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(
+        LinearLayout.LayoutParams overlayParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
+                ViewGroup.LayoutParams.WRAP_CONTENT);
         overlayParams.leftMargin = dp(7);
         overlayParams.topMargin = dp(5);
         overlayParams.rightMargin = dp(7);
         root.addView(overlay, overlayParams);
+        addPageKeys(pad);
+        root.addView(pad, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
+    }
+
+    private void addPageKeys(FrameLayout pad) {
+        LinearLayout rail = new LinearLayout(this);
+        rail.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout keys = new LinearLayout(this);
+        keys.setOrientation(LinearLayout.VERTICAL);
+        Button up = createCompactButton("PgUp", 0);
+        Button down = createCompactButton("PgDn", 0);
+        up.setContentDescription("Page Up 向上翻页");
+        down.setContentDescription("Page Down 向下翻页");
+        up.setOnClickListener(view -> sendKeyPress(Protocol.KEY_PAGE_UP));
+        down.setOnClickListener(view -> sendKeyPress(Protocol.KEY_PAGE_DOWN));
+        keys.addView(up, dp(58), dp(48));
+        keys.addView(down, dp(58), dp(48));
+        rail.addView(keys);
+
+        Button toggle = createCompactButton("", 0);
+        toggle.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(41, 46, 54)));
+        rail.addView(toggle, dp(48), dp(48));
+        updatePageKeys(keys, toggle, preferences.getBoolean(PREF_PAGE_KEYS, true));
+        toggle.setOnClickListener(view -> {
+            boolean show = keys.getVisibility() != View.VISIBLE;
+            updatePageKeys(keys, toggle, show);
+            preferences.edit().putBoolean(PREF_PAGE_KEYS, show).apply();
+        });
+        pad.addView(rail, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.END | Gravity.CENTER_VERTICAL));
+    }
+
+    private void updatePageKeys(LinearLayout keys, Button toggle, boolean show) {
+        keys.setVisibility(show ? View.VISIBLE : View.GONE);
+        toggle.setText(show ? "收起" : "翻页");
+        toggle.setContentDescription(show ? "收起翻页键" : "展开翻页键");
     }
 
     private Button createCompactButton(String text, int width) {

@@ -36,11 +36,14 @@ final class Protocol {
     static final int TYPE_ACK = 7;
     static final int TYPE_PONG = 8;
     static final int TYPE_CLICK = 9;
+    static final int TYPE_WHEEL = 10;
 
     static final int KEY_BACKSPACE = 1;
     static final int KEY_ENTER = 2;
     static final int KEY_TAB = 3;
     static final int KEY_ESCAPE = 4;
+    static final int KEY_PAGE_UP = 5;
+    static final int KEY_PAGE_DOWN = 6;
 
     private static final byte VERSION = 3;
     private static final int HEADER_LENGTH = 24;
@@ -147,11 +150,16 @@ final class Protocol {
 
     static byte[] keyPress(CryptoContext crypto, int sequence, int key)
             throws GeneralSecurityException {
-        if (key < KEY_BACKSPACE || key > KEY_ESCAPE) {
+        if (key < KEY_BACKSPACE || key > KEY_PAGE_DOWN) {
             throw new IllegalArgumentException("unknown key");
         }
         return crypto.encrypt(TYPE_KEY, sequence,
                 new byte[] {(byte) key, 0, 0, 0});
+    }
+
+    static byte[] wheel(CryptoContext crypto, int sequence, int ticks)
+            throws GeneralSecurityException {
+        return crypto.encrypt(TYPE_WHEEL, sequence, intPayload(ticks));
     }
 
     static byte[] discoveryRequest() {

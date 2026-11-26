@@ -1,13 +1,13 @@
 # RemoPad
 
-RemoPad 把 Android 手机变成 Windows 的轻量触摸板和键盘，只传输输入事件，不传输屏幕画面。Android 0.4.0 同时支持前向保密 Wi-Fi 和实验性 Bluetooth HID。
+RemoPad 把 Android 手机变成 Windows 的轻量触摸板和键盘，只传输输入事件，不传输屏幕画面。可通过加密 Wi-Fi 或 Bluetooth HID 连接。
 
 ## 项目状态
 
 | 组件 | 状态 |
 | --- | --- |
-| Android 客户端 | 0.4.0：协议 v3、滚动累积与速度自适应 |
-| Windows 接收端 | 0.4：自动 UAC 提权、DPAPI 密钥存储和临时 ECDH 会话 |
+| Android 客户端 | 0.5.0，支持双指整格滚轮和侧边翻页键 |
+| Windows 接收端 | 0.5.0，支持整格滚轮、翻页键和 v3 加密连接 |
 | iPadOS 客户端 | **实验性 v1 源码：尚未编译、签名或真机验证，也尚未升级到 v3 协议** |
 
 ## 已实现
@@ -76,15 +76,18 @@ Bluetooth HID 是否可用取决于手机厂商的系统实现。配对期间不
 
 - 一指移动：鼠标移动
 - 一指轻点：一次左键单击；连续轻点两次为双击
-- 双指移动：水平/垂直滚动
+- 双指上下滑动按鼠标滚轮逐格滚动，向上滑向上滚。默认每 20 dp 一格，“滚动”滑块可调整灵敏度。双指横滑可水平滚动。
 - 双指轻点：右键
 - 三指同时按下并移动：拖动
+- 点触控区右侧的 PgUp 或 PgDn 向当前窗口发送键盘翻页键。点“收起”隐藏，点“翻页”呼出，应用会记住选择。
+
+Wi-Fi 使用以上新功能时，请同时更新 Android 客户端和 Windows 接收器至 0.5.0。蓝牙模式只需更新 Android 客户端。
 
 ## 当前限制
 
 - Windows Wi-Fi 接收端仍使用 `SendInput`，不是 Precision Touchpad。接收器默认自动请求管理员权限，但 Windows 的 UAC/登录安全桌面不会接受 `SendInput`，也不会被静默绕过。
 - v3 为每次连接生成临时 ECDH 密钥，长期配对密钥以后泄露不会解密过去抓取的会话；泄露仍允许建立未来连接，应使用 `-ResetPairingKey` 轮换。
 - Bluetooth HID 需要 Android 9+，且应用必须保持前台；部分厂商会禁用该系统能力。
-- iPadOS 工程仍停留在旧 v1 协议，当前不能连接 0.4 Windows 接收端。
+- iPadOS 工程仍停留在旧 v1 协议，当前不能连接 v3 Windows 接收端。
 
 版本变化见 `CHANGELOG.md`。协议说明见 `docs/protocol-v3.md`，旧版记录保留在 `docs/protocol-v1.md` 和 `docs/protocol-v2.md`。

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0 — 2026-11-26
+
+- Added a collapsible Page Up / Page Down panel on the Android touchpad. Its visibility is remembered across launches.
+- Two-finger vertical swipes now send whole mouse wheel ticks over Bluetooth HID or Wi-Fi. The scroll sensitivity slider adjusts the travel per tick. Two-finger horizontal scrolling, right-click and immediate three-finger dragging remain available.
+- Added reliable wheel ticks and extended navigation keys to the Windows Wi-Fi receiver. Upgrade both ends for Wi-Fi or just Android for Bluetooth.
+
 ## 0.4.0 — 2026-08-14
 
 ### Security

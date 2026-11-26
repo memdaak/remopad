@@ -428,6 +428,7 @@ public static class RemoPadInput
     private const uint MOUSEEVENTF_WHEEL = 0x0800;
     private const uint MOUSEEVENTF_HWHEEL = 0x1000;
     private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     private const uint KEYEVENTF_UNICODE = 0x0004;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -503,8 +504,11 @@ public static class RemoPadInput
         else if (key == 2) virtualKey = 0x0D;
         else if (key == 3) virtualKey = 0x09;
         else if (key == 4) virtualKey = 0x1B;
+        else if (key == 5) virtualKey = 0x21;
+        else if (key == 6) virtualKey = 0x22;
         else throw new ArgumentOutOfRangeException("key");
-        return Send(new INPUT[] { Keyboard(virtualKey, 0, 0), Keyboard(virtualKey, 0, KEYEVENTF_KEYUP) });
+        uint flags = key >= 5 ? KEYEVENTF_EXTENDEDKEY : 0;
+        return Send(new INPUT[] { Keyboard(virtualKey, 0, flags), Keyboard(virtualKey, 0, flags | KEYEVENTF_KEYUP) });
     }
     public static int Text(string text)
     {
@@ -679,7 +683,7 @@ function Send-RemoPadAck {
     Send-RemoPadEncrypted @ackParameters
 }
 
-Write-Host 'RemoPad Windows Receiver v0.4' -ForegroundColor Cyan
+Write-Host 'RemoPad Windows Receiver v0.5.0' -ForegroundColor Cyan
 Write-Host "Listening on UDP port $Port"
 Write-Host ('Secure pairing key: ' + (Format-RemoPadKey $PairingKey)) -ForegroundColor Yellow
 $addresses = @(Get-LocalIPv4Addresses)
@@ -745,7 +749,7 @@ try {
         }
 
         if ($message.Type -eq 3 -or $message.Type -eq 5 -or
-            $message.Type -eq 6 -or $message.Type -eq 9) {
+            $message.Type -eq 6 -or $message.Type -eq 9 -or $message.Type -eq 10) {
             $reliableKey = $endpointKey + ':' + $message.Sequence
             $alreadyProcessed = $processedReliable.ContainsKey($reliableKey)
             if (-not $alreadyProcessed) {
@@ -809,10 +813,19 @@ try {
                 Send-RemoPadAck -AcknowledgedSequence $message.Sequence -Target $remote -Session $sessionEntry.Crypto
             }
             6 {
-                if ($message.Payload.Length -ne 4 -or $message.Payload[0] -lt 1 -or $message.Payload[0] -gt 4) { continue }
+                if ($message.Payload.Length -ne 4 -or $message.Payload[0] -lt 1 -or $message.Payload[0] -gt 6) { continue }
                 $key = [int]$message.Payload[0]
                 if ($DryRun) { Write-Host "key $key" }
                 else { $inputError = [RemoPadInput]::KeyPress($key); if ($inputError -ne 0) { Write-RemoPadInputWarning $inputError } }
+                Send-RemoPadAck -AcknowledgedSequence $message.Sequence -Target $remote -Session $sessionEntry.Crypto
+            }
+            10 {
+                if ($message.Payload.Length -ne 4) { continue }
+                $ticks = [BitConverter]::ToInt32($message.Payload, 0)
+                if ($ticks -eq 0 -or $ticks -lt -127 -or $ticks -gt 127) { continue }
+                $delta = $ticks * 120
+                if ($DryRun) { Write-Host "vertical-wheel $delta" }
+                else { $inputError = [RemoPadInput]::VerticalWheel($delta); if ($inputError -ne 0) { Write-RemoPadInputWarning $inputError } }
                 Send-RemoPadAck -AcknowledgedSequence $message.Sequence -Target $remote -Session $sessionEntry.Crypto
             }
         }

@@ -16,11 +16,14 @@ final class TrackpadView extends View {
     interface GestureListener {
         void onMove(float dx, float dy);
         void onScroll(float dx, float dy);
+        void onWheel(int ticks);
         void onButton(int button, boolean isDown);
         void onClick(int button);
     }
 
     private static final long TAP_TIMEOUT_MS = 260;
+    private static final float DP_PER_WHEEL_TICK = 20f;
+    private enum ScrollAxis { PENDING, HORIZONTAL, VERTICAL }
 
     private final SparseArray<TouchPoint> pointers = new SparseArray<>();
     private final Paint titlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -33,6 +36,10 @@ final class TrackpadView extends View {
     private float scrollSensitivity = 1f;
     private long sessionStartedAt;
     private long lastScrollEventAt;
+    private ScrollAxis scrollAxis = ScrollAxis.PENDING;
+    private float pendingScrollX;
+    private float pendingScrollY;
+    private float wheelRemainder;
     private float sessionMovement;
     private int maximumPointerCount;
     private boolean dragging;
@@ -78,6 +85,8 @@ final class TrackpadView extends View {
         sessionMovement = 0f;
         maximumPointerCount = 0;
         lastScrollEventAt = 0L;
+        scrollAxis = ScrollAxis.PENDING;
+        pendingScrollX = pendingScrollY = wheelRemainder = 0f;
     }
 
     @Override
@@ -86,7 +95,7 @@ final class TrackpadView extends View {
         float centerX = getWidth() / 2f;
         float centerY = getHeight() / 2f;
         canvas.drawText("触控区域", centerX, centerY - 4f * density, titlePaint);
-        canvas.drawText("一指移动和轻点 · 双指滚动和右键 · 三指拖动",
+        canvas.drawText("双指滚轮 · 三指拖动",
                 centerX, centerY + 22f * density, hintPaint);
     }
 
@@ -105,6 +114,14 @@ final class TrackpadView extends View {
             case MotionEvent.ACTION_POINTER_DOWN:
                 addPointer(event, actionIndex);
                 maximumPointerCount = Math.max(maximumPointerCount, pointers.size());
+                // Start centroid deltas at the moment the fingers meet.
+                for (int i = 0; i < event.getPointerCount(); i++) {
+                    TouchPoint point = pointers.get(event.getPointerId(i));
+                    if (point != null) {
+                        point.lastX = event.getX(i);
+                        point.lastY = event.getY(i);
+                    }
+                }
                 if (pointers.size() == 3 && maximumPointerCount == 3) {
                     startThreeFingerDrag();
                 } else if (dragging) {
@@ -117,6 +134,9 @@ final class TrackpadView extends View {
                 return true;
 
             case MotionEvent.ACTION_POINTER_UP:
+                if (pointers.size() == 2 && maximumPointerCount == 2) {
+                    handleMove(event);
+                }
                 pointers.remove(event.getPointerId(actionIndex));
                 if (dragging) {
                     stopThreeFingerDrag();
@@ -224,17 +244,34 @@ final class TrackpadView extends View {
             gestureListener.onMove(averageDx * pointerSensitivity,
                     averageDy * pointerSensitivity);
         } else if (pointers.size() == 2 && maximumPointerCount == 2) {
-            long eventTime = event.getEventTime();
-            long elapsed = lastScrollEventAt == 0L
-                    ? 16L : Math.max(8L, eventTime - lastScrollEventAt);
+            handleTwoFingerScroll(averageDx, averageDy, event.getEventTime());
+        }
+    }
+
+    private void handleTwoFingerScroll(float dx, float dy, long eventTime) {
+        if (scrollAxis == ScrollAxis.PENDING) {
+            pendingScrollX += dx;
+            pendingScrollY += dy;
+            if (Math.max(Math.abs(pendingScrollX), Math.abs(pendingScrollY)) * density < touchSlop) {
+                return;
+            }
+            dx = pendingScrollX;
+            dy = pendingScrollY;
+            scrollAxis = Math.abs(dy) >= Math.abs(dx) ? ScrollAxis.VERTICAL : ScrollAxis.HORIZONTAL;
+        }
+        if (scrollAxis == ScrollAxis.VERTICAL) {
+            wheelRemainder -= dy * scrollSensitivity;
+            int ticks = (int) (wheelRemainder / DP_PER_WHEEL_TICK);
+            if (ticks != 0) {
+                wheelRemainder -= ticks * DP_PER_WHEEL_TICK;
+                gestureListener.onWheel(ticks);
+            }
+        } else {
+            long elapsed = lastScrollEventAt == 0L ? 16L : Math.max(8L, eventTime - lastScrollEventAt);
             lastScrollEventAt = eventTime;
-            float speed = (float) Math.hypot(averageDx, averageDy)
-                    * 1000f / elapsed;
-            float acceleration = 1f + Math.min(1.4f,
-                    Math.max(0f, speed - 70f) / 360f);
-            gestureListener.onScroll(
-                    averageDx * scrollSensitivity * acceleration,
-                    averageDy * scrollSensitivity * acceleration);
+            float speed = Math.abs(dx) * 1000f / elapsed;
+            float acceleration = 1f + Math.min(1.4f, Math.max(0f, speed - 70f) / 360f);
+            gestureListener.onScroll(dx * scrollSensitivity * acceleration, 0f);
         }
     }
 
@@ -250,7 +287,7 @@ final class TrackpadView extends View {
                         gestureListener.onClick(1);
                     }
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-                } else if (maximumPointerCount == 2) {
+                } else if (maximumPointerCount == 2 && scrollAxis == ScrollAxis.PENDING) {
                     if (gestureListener != null) {
                         gestureListener.onClick(2);
                     }

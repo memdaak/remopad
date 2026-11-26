@@ -286,6 +286,15 @@ final class BluetoothHidTransport {
         sendMouseReport(0, 0, 0, 0);
     }
 
+    void sendWheel(int ticks) {
+        if (!connected) return;
+        while (ticks != 0) {
+            int wheel = clampReport(ticks);
+            sendMouseReport(0, 0, wheel, 0);
+            ticks -= wheel;
+        }
+    }
+
     void sendClick(int button) {
         sendButton(button, true);
         sendButton(button, false);
@@ -321,6 +330,8 @@ final class BluetoothHidTransport {
             case Protocol.KEY_ENTER: usage = 40; break;
             case Protocol.KEY_TAB: usage = 43; break;
             case Protocol.KEY_ESCAPE: usage = 41; break;
+            case Protocol.KEY_PAGE_UP: usage = 0x4b; break;
+            case Protocol.KEY_PAGE_DOWN: usage = 0x4e; break;
             default: return;
         }
         keyboardExecutor.execute(() -> sendKeyboardStroke(0, usage));

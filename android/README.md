@@ -1,4 +1,4 @@
-# RemoPad Android 0.4
+# RemoPad Android 0.5.0
 
 轻量原生 Android 客户端：纯 Java、系统 View，无 Kotlin、Compose、AndroidX 或第三方库。
 
@@ -29,7 +29,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 应用会广播发现请求并自动填写电脑 IP。首次连接还需录入接收器显示的 64 位十六进制安全配对密钥。每次连接通过 P-256 临时 ECDH 和长期配对密钥建立独立会话密钥，随后使用 AES-256-CBC 与 HMAC-SHA256 保护输入。移动和滚动使用低延迟 UDP，其中相对增量会在发送线程繁忙时累积而不是覆盖；点击、按键和文本使用 ACK、去重和重传。心跳用于自动重连及延迟统计，重连会建立新的临时会话。
 
-0.4 客户端的 Wi-Fi 模式只兼容 0.4 接收器。Bluetooth HID 模式不使用该网络协议。
+Wi-Fi 模式请使用 0.5.0 接收器以支持整格滚轮和翻页键。Bluetooth HID 模式只需升级手机。
 
 ## Bluetooth HID
 
@@ -42,7 +42,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 ## 手势与按钮
 
 - 一指移动、轻点左键
-- 双指滚动、轻点右键；快速拖动会获得有限加速度
+- 双指上下滑按格滚动，左右滑水平滚动，轻点右键
+- 右侧 PgUp / PgDn 向电脑发送键盘翻页键。点“收起”或“翻页”切换显示，重启后记住选择
 - 三指拖动
 - “横屏/竖屏”切换方向，启动默认竖屏
 - “键盘”调出系统软键盘，平时保持隐藏
